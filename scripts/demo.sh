@@ -108,6 +108,10 @@ echo "=== CPU profile: top functions by flat time ==="
 go tool pprof -top -nodecount=15 "$PREFIX-cpu.pprof" | sed -n '1,24p'
 
 echo
+echo "=== CPU profile: application call paths (cumulative, focus=pprof-lab) ==="
+go tool pprof -top -cum -focus='pprof-lab' -nodecount=15 "$PREFIX-cpu.pprof" | sed -n '1,26p'
+
+echo
 echo "=== Heap profile: top functions by in-use space ==="
 go tool pprof -top -nodecount=10 -sample_index=inuse_space "$PREFIX-heap-inuse.pprof" | sed -n '1,19p'
 
