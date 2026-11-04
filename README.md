@@ -447,6 +447,35 @@ operation. Expect `optimized_cpu` to reduce `ns/op`; expect
 `optimized_memory` to reduce `B/op` and `allocs/op`. Some overlap is normal:
 less allocation also means less GC work and often less CPU.
 
+### Reference run
+
+These are illustrative numbers from one Apple M3 Pro, not a guarantee. The
+benchmark body is about 3.6 KB and requests the top 10 terms; each row is the
+median of five runs. Run the commands above on your machine to get your own
+baseline.
+
+`BenchmarkAnalyzeDocument`:
+
+| Branch | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| `main` | 225,000 | 1,793,000 | 1,713 |
+| `optimized_cpu` | 16,600 | 53,000 | 15 |
+| `optimized_memory` | 78,000 | 69,400 | 590 |
+
+`BenchmarkSearch` (one stored document, mixed-case body):
+
+| Branch | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| `main` | 4,800 | 3,192 | 4 |
+| `optimized_cpu` | 4,800 | 3,192 | 4 |
+| `optimized_memory` | 2,600 | 120 | 3 |
+
+The memory branch trades some CPU for much lower per-search allocation; the
+CPU branch does not touch search at all. The analyze benchmark shows the more
+important lesson: the CPU branch wins on time and allocations, while the memory
+branch keeps more explicit retention controls and still removes most of the
+baseline's allocation volume.
+
 ## Configuration
 
 ### Server
