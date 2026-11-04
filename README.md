@@ -74,7 +74,7 @@ The full command reference is in
 make demo
 ```
 
-`make demo` takes roughly 35 seconds with the defaults (30s load, 8s CPU
+`make demo` takes roughly 25 seconds with the defaults (20s load, 6s CPU
 profile). It writes:
 
 ```
