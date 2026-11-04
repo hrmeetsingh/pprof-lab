@@ -168,6 +168,18 @@ The gRPC `Stats` response uses the proto field names instead
 (`documents`, `cache_entries`, `heap_alloc_bytes`, and so on). The load
 generator prints those lowercase names in its progress line.
 
+## Requirements
+
+- Go 1.26+ (the `go` directive in `go.mod` is 1.26; newer toolchains can
+  auto-download).
+- `curl`.
+- Free TCP ports `50051` and `9090`.
+- Optional: Docker + Docker Compose for the container path.
+- Optional: Graphviz (`dot`) for pprof's graph view. Top, flame graph and
+  source views work without it.
+- Optional: `protoc` only if you change the `.proto` file and run `make proto`.
+  Generated code is committed.
+
 ## Lab 0: Get the service running
 
 **Question:** can I run the service, drive traffic, and see its state?
