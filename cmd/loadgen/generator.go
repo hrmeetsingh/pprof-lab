@@ -71,10 +71,19 @@ func (g *generator) newDocument(id string) *docprocv1.Document {
 func (g *generator) word() string {
 	// 60% of tokens come from the first 12 words, producing a clear top-terms
 	// distribution without making the document unrealistically repetitive.
+	var word string
 	if g.rng.Intn(100) < 60 {
-		return vocabulary[g.rng.Intn(12)]
+		word = vocabulary[g.rng.Intn(12)]
+	} else {
+		word = vocabulary[g.rng.Intn(len(vocabulary))]
 	}
-	return vocabulary[g.rng.Intn(len(vocabulary))]
+
+	// Mixed case makes case-insensitive tokenization and search realistic.
+	// It also ensures strings.ToLower actually has work to do.
+	if g.rng.Intn(100) < 20 {
+		return strings.ToUpper(word)
+	}
+	return word
 }
 
 func (g *generator) query() string {

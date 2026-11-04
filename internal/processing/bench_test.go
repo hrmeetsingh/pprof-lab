@@ -10,7 +10,7 @@ func benchmarkDoc() Document {
 		ID:    "bench-doc",
 		Title: "Benchmark",
 		Body: strings.Repeat(
-			"the quick brown fox jumps over the lazy dog while gophers write go code ",
+			"The Quick Brown Fox jumps over the lazy Dog while Gophers write Go code ",
 			40,
 		),
 	}
