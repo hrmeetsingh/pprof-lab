@@ -44,6 +44,18 @@ for, which code to read, and how to check your understanding.
 | Fast demo | Seeing profiles immediately | `make demo`, then [Lab 1](#lab-1-cpu---where-does-the-time-go) |
 | Docker | No local Go toolchain, or cleaner Linux CPU profiles | [Docker](#docker) |
 
+### Lab map
+
+| Lab | Question | Evidence | Branch |
+| --- | --- | --- | --- |
+| [0](#lab-0-get-the-service-running) | Can I run it? | `/healthz`, `/stats` | `main` |
+| [1](#lab-1-cpu---where-does-the-time-go) | Where does CPU time go? | CPU profile | `main` |
+| [2](#lab-2-memory---what-is-retained) | What keeps the heap alive? | heap/allocs | `main` |
+| [3](#lab-3-beyond-cpu-and-heap) | What about waiting and scheduling? | goroutine, block, mutex, trace | `main` |
+| [4](#lab-4-fix-the-cpu-path) | Can I remove the CPU hotspots? | CPU diff, benchmarks | `optimized_cpu` |
+| [5](#lab-5-fix-the-memory-path) | Can I bound retention? | heap diff, `/stats` | `optimized_memory` |
+| [6](#lab-6-compare-the-branches-and-write-your-conclusion) | How do I prove the result? | benchmarks, profile diff | all |
+
 ## Branches
 
 | Branch | Purpose |
