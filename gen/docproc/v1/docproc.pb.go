@@ -766,7 +766,7 @@ const file_docproc_v1_docproc_proto_rawDesc = "" +
 	"\x06Ingest\x12\x19.docproc.v1.IngestRequest\x1a\x1a.docproc.v1.IngestResponse\x12B\n" +
 	"\aAnalyze\x12\x1a.docproc.v1.AnalyzeRequest\x1a\x1b.docproc.v1.AnalyzeResponse\x12?\n" +
 	"\x06Search\x12\x19.docproc.v1.SearchRequest\x1a\x1a.docproc.v1.SearchResponse\x12<\n" +
-	"\x05Stats\x12\x18.docproc.v1.StatsRequest\x1a\x19.docproc.v1.StatsResponseB<Z:github.com/harmeetsingh/pprof-lab/gen/docproc/v1;docprocv1b\x06proto3"
+	"\x05Stats\x12\x18.docproc.v1.StatsRequest\x1a\x19.docproc.v1.StatsResponseB;Z9github.com/hrmeetsingh/pprof-lab/gen/docproc/v1;docprocv1b\x06proto3"
 
 var (
 	file_docproc_v1_docproc_proto_rawDescOnce sync.Once

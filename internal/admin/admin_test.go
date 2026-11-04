@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/harmeetsingh/pprof-lab/internal/processing"
+	"github.com/hrmeetsingh/pprof-lab/internal/processing"
 )
 
 func TestHandler(t *testing.T) {

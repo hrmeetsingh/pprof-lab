@@ -11,7 +11,7 @@ import (
 	"net/http/pprof"
 	"time"
 
-	"github.com/harmeetsingh/pprof-lab/internal/processing"
+	"github.com/hrmeetsingh/pprof-lab/internal/processing"
 )
 
 // Server is the admin HTTP server.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	docprocv1 "github.com/harmeetsingh/pprof-lab/gen/docproc/v1"
+	docprocv1 "github.com/hrmeetsingh/pprof-lab/gen/docproc/v1"
 )
 
 // The vocabulary is deliberately small and skewed: a handful of common words

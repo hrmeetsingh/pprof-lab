@@ -1,4 +1,4 @@
-module github.com/harmeetsingh/pprof-lab
+module github.com/hrmeetsingh/pprof-lab
 
 go 1.26.0
 

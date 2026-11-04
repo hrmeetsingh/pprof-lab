@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 
-	docprocv1 "github.com/harmeetsingh/pprof-lab/gen/docproc/v1"
-	"github.com/harmeetsingh/pprof-lab/internal/processing"
+	docprocv1 "github.com/hrmeetsingh/pprof-lab/gen/docproc/v1"
+	"github.com/hrmeetsingh/pprof-lab/internal/processing"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

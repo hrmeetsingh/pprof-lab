@@ -3,7 +3,7 @@ syntax = "proto3";
 // Package docproc.v1 contains the document processing service contract.
 package docproc.v1;
 
-option go_package = "github.com/harmeetsingh/pprof-lab/gen/docproc/v1;docprocv1";
+option go_package = "github.com/hrmeetsingh/pprof-lab/gen/docproc/v1;docprocv1";
 
 // DocumentService is a small in-memory document processing microservice.
 // It is deliberately kept simple so that CPU and memory profiles are easy to

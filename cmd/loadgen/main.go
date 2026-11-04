@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	docprocv1 "github.com/harmeetsingh/pprof-lab/gen/docproc/v1"
+	docprocv1 "github.com/hrmeetsingh/pprof-lab/gen/docproc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"

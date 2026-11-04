@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 GO ?= go
-MODULE := github.com/harmeetsingh/pprof-lab
+MODULE := github.com/hrmeetsingh/pprof-lab
 BIN_DIR := bin
 
 GRPC_ADDR ?= :50051
