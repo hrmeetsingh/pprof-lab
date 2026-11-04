@@ -337,9 +337,13 @@ func waitForServer(ctx context.Context, conn *grpc.ClientConn) error {
 }
 
 func sampleIDs(rng *rand.Rand, seedIDs []string, recent *recentIDs, n int) []string {
-	pool := make([]string, 0, len(seedIDs)+recent.len())
-	pool = append(pool, seedIDs...)
-	pool = append(pool, recent.snapshot()...)
+	// Prefer recently ingested documents: with a bounded store, old seed
+	// documents may legitimately have been evicted. Seed IDs are only a
+	// fallback for the first few operations after startup.
+	pool := recent.snapshot()
+	if len(pool) == 0 {
+		pool = append(pool, seedIDs...)
+	}
 	if len(pool) == 0 {
 		return nil
 	}

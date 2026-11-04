@@ -44,7 +44,10 @@ func main() {
 		runtime.SetMutexProfileFraction(*mutexProfileFrac)
 	}
 
-	processor := processing.NewProcessor()
+	processorConfig := processing.DefaultConfig()
+	processorConfig.MaxDocuments = envInt("MAX_DOCUMENTS", processorConfig.MaxDocuments)
+	processorConfig.CacheEntries = envInt("CACHE_ENTRIES", processorConfig.CacheEntries)
+	processor := processing.NewProcessorWithConfig(processorConfig)
 	service := docproc.NewService(processor)
 
 	listener, err := net.Listen("tcp", *grpcAddr)
@@ -118,6 +121,8 @@ func main() {
 		"addr", listener.Addr().String(),
 		"block_profile_rate", *blockProfileRate,
 		"mutex_profile_fraction", *mutexProfileFrac,
+		"max_documents", processorConfig.MaxDocuments,
+		"cache_entries", processorConfig.CacheEntries,
 	)
 
 	if err := grpcServer.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

@@ -1,10 +1,17 @@
 // Package processing implements the document analysis pipeline used by the
-// demo service. The baseline version intentionally contains a handful of CPU
-// and memory problems so that profiles collected from a running service have
-// something interesting to show. The README explains how to find and fix them.
+// demo service.
+//
+// This branch contains the memory optimizations. The changes were chosen from
+// heap and allocation profiles captured on the main branch: the store and cache
+// grew without bound, cached terms retained entire lowercased documents, and
+// several hot paths either recompiled regexps or grew slices repeatedly.
+//
+// The CPU-heavy O(n * distinct) top-terms scan is intentionally left in place;
+// see optimized_cpu for that work.
 package processing
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -22,6 +29,10 @@ var (
 	ErrDuplicateDocument = errors.New("document already exists")
 	ErrDocumentNotFound  = errors.New("document not found")
 	ErrEmptyQuery        = errors.New("query must not be empty")
+
+	// Compiling the pattern once removes a large per-document allocation that
+	// dominated the baseline allocation profile.
+	tokenPattern = regexp.MustCompile(`[A-Za-z0-9]+`)
 )
 
 // Document is the domain representation of a stored document.
@@ -66,38 +77,72 @@ type Stats struct {
 	Evictions      int64
 }
 
-// Processor stores documents and caches their analysis results.
-//
-// The baseline implementation keeps every document and every analysis result
-// in memory for the lifetime of the process.
+// Config bounds the two data structures that grew without limit in main.
+type Config struct {
+	// MaxDocuments is the number of documents kept in memory. The oldest
+	// document is evicted first (FIFO).
+	MaxDocuments int
+	// CacheEntries is the number of analysis results kept in the LRU cache.
+	CacheEntries int
+}
+
+// DefaultConfig returns safe defaults for the demo service.
+func DefaultConfig() Config {
+	return Config{
+		MaxDocuments: 10_000,
+		CacheEntries: 4_096,
+	}
+}
+
+// Processor stores a bounded number of documents and analysis results.
 type Processor struct {
-	mu         sync.RWMutex
+	docsMu     sync.RWMutex
 	docs       map[string]Document
-	cache      map[string]*Summary
+	order      *list.List // document IDs in insertion order
 	totalBytes int64
+	maxDocs    int
+
+	cache *summaryCache
 
 	analyses  atomic.Int64
 	cacheHits atomic.Int64
+	evictions atomic.Int64
 }
 
-// NewProcessor returns an empty processor.
+// NewProcessor returns a processor with DefaultConfig.
 func NewProcessor() *Processor {
+	return NewProcessorWithConfig(DefaultConfig())
+}
+
+// NewProcessorWithConfig returns a processor with explicit bounds. Zero or
+// negative values fall back to DefaultConfig.
+func NewProcessorWithConfig(cfg Config) *Processor {
+	defaults := DefaultConfig()
+	if cfg.MaxDocuments <= 0 {
+		cfg.MaxDocuments = defaults.MaxDocuments
+	}
+	if cfg.CacheEntries <= 0 {
+		cfg.CacheEntries = defaults.CacheEntries
+	}
+
 	return &Processor{
-		docs:  make(map[string]Document),
-		cache: make(map[string]*Summary),
+		docs:    make(map[string]Document, cfg.MaxDocuments),
+		order:   list.New(),
+		maxDocs: cfg.MaxDocuments,
+		cache:   newSummaryCache(cfg.CacheEntries),
 	}
 }
 
 // Ingest validates and stores a batch of documents. The operation is
-// all-or-nothing: if any document is invalid or already exists, nothing is
-// stored.
+// all-or-nothing. When the store is full, the oldest documents are evicted,
+// together with their cached analyses.
 func (p *Processor) Ingest(docs []Document) ([]string, error) {
 	if len(docs) == 0 {
 		return nil, fmt.Errorf("%w: at least one document is required", ErrInvalidDocument)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.docsMu.Lock()
+	defer p.docsMu.Unlock()
 
 	seen := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
@@ -113,33 +158,35 @@ func (p *Processor) Ingest(docs []Document) ([]string, error) {
 		seen[doc.ID] = struct{}{}
 	}
 
-	var ids []string
+	ids := make([]string, 0, len(docs))
 	for _, doc := range docs {
 		p.docs[doc.ID] = doc
+		p.order.PushBack(doc.ID)
 		p.totalBytes += int64(len(doc.Title) + len(doc.Body))
 		ids = append(ids, doc.ID)
 	}
+	p.evictLocked()
 	return ids, nil
 }
 
 // Analyze returns a summary for every requested document. An empty ids slice
-// means "all documents". Results are cached by document ID.
+// means "all documents". Results are served from the bounded LRU cache.
 func (p *Processor) Analyze(ids []string, topN int) ([]Summary, error) {
 	docs, err := p.snapshot(ids)
 	if err != nil {
 		return nil, err
 	}
 
-	var summaries []Summary
+	summaries := make([]Summary, 0, len(docs))
 	for _, doc := range docs {
-		if cached, ok := p.getCached(doc.ID); ok {
+		if cached, ok := p.cache.get(doc.ID); ok {
 			p.cacheHits.Add(1)
 			summaries = append(summaries, *cached)
 			continue
 		}
 
 		summary := analyzeDocument(doc, topN)
-		p.putCached(doc.ID, summary)
+		p.cache.put(doc.ID, summary)
 		p.analyses.Add(1)
 		summaries = append(summaries, *summary)
 	}
@@ -147,7 +194,8 @@ func (p *Processor) Analyze(ids []string, topN int) ([]Summary, error) {
 }
 
 // Search finds documents containing query. Matching is case-insensitive and
-// non-overlapping, like strings.Count.
+// non-overlapping, like strings.Count, but does not allocate a lowercased copy
+// of every document body.
 func (p *Processor) Search(query string, ids []string, limit int) ([]Hit, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -166,16 +214,14 @@ func (p *Processor) Search(query string, ids []string, limit int) ([]Hit, error)
 	}
 
 	needle := strings.ToLower(query)
-	var hits []Hit
+	hits := make([]Hit, 0, min(len(docs), limit))
 	for _, doc := range docs {
-		haystack := strings.ToLower(doc.Body)
-		score := strings.Count(haystack, needle)
+		score, first := countFoldASCII(doc.Body, needle)
 		if score == 0 {
 			continue
 		}
 
-		idx := strings.Index(haystack, needle)
-		start := idx - 60
+		start := first - 60
 		if start < 0 {
 			start = 0
 		}
@@ -202,11 +248,10 @@ func (p *Processor) Search(query string, ids []string, limit int) ([]Hit, error)
 
 // Stats returns a snapshot of processor and Go runtime statistics.
 func (p *Processor) Stats() Stats {
-	p.mu.RLock()
+	p.docsMu.RLock()
 	documents := len(p.docs)
-	cacheEntries := len(p.cache)
 	totalBytes := p.totalBytes
-	p.mu.RUnlock()
+	p.docsMu.RUnlock()
 
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -216,16 +261,17 @@ func (p *Processor) Stats() Stats {
 		TotalBytes:     totalBytes,
 		Analyses:       p.analyses.Load(),
 		CacheHits:      p.cacheHits.Load(),
-		CacheEntries:   cacheEntries,
+		CacheEntries:   p.cache.len(),
 		HeapAllocBytes: mem.HeapAlloc,
 		HeapInuseBytes: mem.HeapInuse,
 		Goroutines:     runtime.NumGoroutine(),
+		Evictions:      p.evictions.Load(),
 	}
 }
 
 func (p *Processor) snapshot(ids []string) ([]Document, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.docsMu.RLock()
+	defer p.docsMu.RUnlock()
 
 	if len(ids) == 0 {
 		ids = make([]string, 0, len(p.docs))
@@ -246,17 +292,101 @@ func (p *Processor) snapshot(ids []string) ([]Document, error) {
 	return docs, nil
 }
 
-func (p *Processor) getCached(id string) (*Summary, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	summary, ok := p.cache[id]
-	return summary, ok
+// evictLocked removes oldest documents until the store is within its bound.
+// p.docsMu must be held for writing. Cache eviction also happens here so a
+// document that is gone from the store cannot keep an analysis alive.
+func (p *Processor) evictLocked() {
+	for len(p.docs) > p.maxDocs {
+		oldest := p.order.Front()
+		if oldest == nil {
+			return
+		}
+		id, _ := oldest.Value.(string)
+		p.order.Remove(oldest)
+
+		doc, ok := p.docs[id]
+		if !ok {
+			continue
+		}
+		delete(p.docs, id)
+		p.totalBytes -= int64(len(doc.Title) + len(doc.Body))
+		p.cache.delete(id)
+		p.evictions.Add(1)
+	}
 }
 
-func (p *Processor) putCached(id string, summary *Summary) {
-	p.mu.Lock()
-	p.cache[id] = summary
-	p.mu.Unlock()
+// summaryCache is a bounded LRU cache. Get mutates recency, so a plain Mutex
+// is used rather than an RWMutex.
+type summaryCache struct {
+	mu       sync.Mutex
+	capacity int
+	order    *list.List
+	entries  map[string]*list.Element
+}
+
+type cacheEntry struct {
+	key     string
+	summary *Summary
+}
+
+func newSummaryCache(capacity int) *summaryCache {
+	return &summaryCache{
+		capacity: capacity,
+		order:    list.New(),
+		entries:  make(map[string]*list.Element, capacity),
+	}
+}
+
+func (c *summaryCache) get(key string) (*Summary, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	element, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	c.order.MoveToFront(element)
+	return element.Value.(*cacheEntry).summary, true
+}
+
+func (c *summaryCache) put(key string, summary *Summary) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if element, ok := c.entries[key]; ok {
+		element.Value.(*cacheEntry).summary = summary
+		c.order.MoveToFront(element)
+		return
+	}
+
+	element := c.order.PushFront(&cacheEntry{key: key, summary: summary})
+	c.entries[key] = element
+	for c.order.Len() > c.capacity {
+		oldest := c.order.Back()
+		if oldest == nil {
+			return
+		}
+		c.order.Remove(oldest)
+		delete(c.entries, oldest.Value.(*cacheEntry).key)
+	}
+}
+
+func (c *summaryCache) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	element, ok := c.entries[key]
+	if !ok {
+		return
+	}
+	c.order.Remove(element)
+	delete(c.entries, key)
+}
+
+func (c *summaryCache) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.order.Len()
 }
 
 // analyzeDocument is the core CPU path. It is intentionally not tied to
@@ -275,42 +405,29 @@ func analyzeDocument(doc Document, topN int) *Summary {
 	}
 }
 
-// tokenize lowercases the body and extracts ASCII words.
-//
-// Compiling the regular expression on every call is deliberate: it is a
-// surprisingly common mistake and shows up clearly in CPU and allocation
-// profiles.
+// tokenize lowercases the body and extracts ASCII words. The regexp is
+// package-level, so it is compiled once per process instead of once per
+// document.
 func tokenize(text string) []string {
-	re := regexp.MustCompile(`[A-Za-z0-9]+`)
 	lower := strings.ToLower(text)
-	return re.FindAllString(lower, -1)
+	return tokenPattern.FindAllString(lower, -1)
 }
 
-// countTerms counts tokens and computes the number of unique terms with a
-// linear scan over the unique slice. That scan is O(n^2) for documents with
-// many distinct words.
+// countTerms counts tokens in one pass. The baseline kept a separate `unique`
+// slice containing every token, which was a large allocation and an O(n^2)
+// scan. The counts map already has exactly one key per unique term.
 func countTerms(tokens []string) (map[string]int, int) {
-	counts := make(map[string]int)
-	unique := make([]string, 0, len(tokens))
-
+	counts := make(map[string]int, len(tokens))
 	for _, token := range tokens {
 		counts[token]++
-		found := false
-		for _, existing := range unique {
-			if existing == token {
-				found = true
-				break
-			}
-		}
-		if !found {
-			unique = append(unique, token)
-		}
 	}
-	return counts, len(unique)
+	return counts, len(counts)
 }
 
-// topTerms selects the n most frequent terms by repeatedly scanning the whole
-// map, giving O(n * distinct) work.
+// topTerms selects the n most frequent terms. The selection algorithm is
+// deliberately unchanged from main (the CPU branch fixes it); only the
+// allocations are reduced and the cached term strings are detached from the
+// lowercased body.
 func topTerms(counts map[string]int, n int) []TermCount {
 	if n <= 0 {
 		n = 10
@@ -340,22 +457,68 @@ func topTerms(counts map[string]int, n int) []TermCount {
 			break
 		}
 		used[bestTerm] = struct{}{}
-		result = append(result, TermCount{Term: bestTerm, Count: int64(bestCount)})
+		// bestTerm points into the lowercased document body. Cloning the few
+		// bytes we return prevents the cache from retaining the whole body.
+		result = append(result, TermCount{Term: strings.Clone(bestTerm), Count: int64(bestCount)})
 	}
 	return result
 }
 
-// fingerprint hashes the token stream. Building the intermediate string with
-// += creates a new string on every iteration, which is quadratic in both time
-// and allocations.
+// fingerprint hashes the joined token stream using a pre-sized Builder. The
+// baseline built the string with +=, allocating a new string on every
+// iteration.
 func fingerprint(tokens []string) string {
-	joined := ""
+	size := 0
+	for _, token := range tokens {
+		size += len(token) + 1
+	}
+
+	var joined strings.Builder
+	joined.Grow(size)
 	for i, token := range tokens {
 		if i > 0 {
-			joined += " "
+			joined.WriteByte(' ')
 		}
-		joined += token
+		joined.WriteString(token)
 	}
-	sum := sha256.Sum256([]byte(joined))
+
+	sum := sha256.Sum256([]byte(joined.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+// countFoldASCII counts non-overlapping occurrences of lowerNeedle in haystack
+// without allocating a lowercased copy of haystack. Documents and queries are
+// ASCII (the tokenizer is ASCII as well); this helper is not a substitute for
+// full Unicode case folding.
+func countFoldASCII(haystack, lowerNeedle string) (score int, first int) {
+	first = -1
+	if lowerNeedle == "" {
+		return 0, first
+	}
+
+	for i := 0; i+len(lowerNeedle) <= len(haystack); {
+		if equalFoldASCII(haystack[i:i+len(lowerNeedle)], lowerNeedle) {
+			if first < 0 {
+				first = i
+			}
+			score++
+			i += len(lowerNeedle)
+			continue
+		}
+		i++
+	}
+	return score, first
+}
+
+func equalFoldASCII(candidate, lowerNeedle string) bool {
+	for i := 0; i < len(candidate); i++ {
+		c := candidate[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != lowerNeedle[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -9,9 +9,10 @@ This README is a lab manual, not just an API reference. Follow it from top to
 bottom with the repository open. Every lab tells you what to run, what to look
 for, which code to read, and how to check your understanding.
 
-> **Branch: `main` (baseline).** This branch intentionally contains CPU
-> hotspots and unbounded memory growth. The point is to find them with
-> profiles, not to ship them.
+> **Branch: `optimized_memory`.** This branch starts from `main` and fixes the
+> memory problems found with heap profiles: unbounded document/cache growth,
+> cached terms retaining whole documents, and high allocation volume.
+> CPU-heavy algorithms are intentionally left in place.
 
 ## How to use this manual
 
@@ -75,6 +76,30 @@ main ──┬── optimized_cpu
 Run `git branch --show-current` to see where you are. The first two labs are
 about collecting evidence; do not switch branches until you have looked at the
 baseline profiles yourself.
+
+### On this branch
+
+The memory changes are in `internal/processing/processor.go` and
+`cmd/server/main.go`:
+
+- the document store is bounded by `MAX_DOCUMENTS` with FIFO eviction;
+- the analysis cache is a bounded LRU controlled by `CACHE_ENTRIES`;
+- evicting a document also removes its cached analysis;
+- cached top terms are cloned so they do not retain lowercased bodies;
+- the tokenizer regexp is compiled once, `countTerms` no longer builds a
+  separate unique slice, and output slices are preallocated;
+- `fingerprint` uses a pre-sized `strings.Builder`;
+- search uses an allocation-free ASCII case-fold scan.
+
+Compare the exact diff with:
+
+```bash
+git diff main..optimized_memory -- internal/processing cmd/server
+```
+
+Top-term selection still uses the O(N × distinct) scan from `main`, so CPU
+profiles on this branch still show that hot spot. Fixing it is
+`optimized_cpu`'s lesson.
 
 ## What you will learn
 
