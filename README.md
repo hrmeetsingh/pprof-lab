@@ -101,6 +101,10 @@ Top-term selection still uses the O(N × distinct) scan from `main`, so CPU
 profiles on this branch still show that hot spot. Fixing it is
 `optimized_cpu`'s lesson.
 
+If you want to follow the full manual from the beginning, switch to `main`
+for Labs 0-4 and then come back here for Lab 5. The code in this branch is
+already the result of that lab.
+
 ## What you will learn
 
 - How a Go service exposes `net/http/pprof` on a separate admin port.
