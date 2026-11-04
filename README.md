@@ -9,9 +9,10 @@ This README is a lab manual, not just an API reference. Follow it from top to
 bottom with the repository open. Every lab tells you what to run, what to look
 for, which code to read, and how to check your understanding.
 
-> **Branch: `main` (baseline).** This branch intentionally contains CPU
-> hotspots and unbounded memory growth. The point is to find them with
-> profiles, not to ship them.
+> **Branch: `optimized_cpu`.** This branch starts from `main` and fixes the
+> CPU hotspots found with CPU profiles: regexp compilation per document,
+> quadratic term counting and top-N selection, and quadratic digest building.
+> Memory retention is intentionally unchanged.
 
 ## How to use this manual
 
@@ -75,6 +76,29 @@ main ──┬── optimized_cpu
 Run `git branch --show-current` to see where you are. The first two labs are
 about collecting evidence; do not switch branches until you have looked at the
 baseline profiles yourself.
+
+### On this branch
+
+The CPU changes are in `internal/processing/processor.go`:
+
+- an ASCII tokenizer replaces per-call regexp compilation;
+- `countTerms` derives uniqueness from the counts map in one pass;
+- `topTerms` builds a slice and sorts it once;
+- `fingerprint` streams tokens into SHA-256 through a reusable buffer instead
+  of building one string with `+=`.
+
+Compare the exact diff with:
+
+```bash
+git diff main..optimized_cpu -- internal/processing
+```
+
+The document store and analysis cache are still unbounded on this branch. A
+heap profile will still show linear growth; that is `optimized_memory`'s job.
+
+If you want to follow the full manual from the beginning, switch to `main`
+for Labs 0-3 and the baseline capture, then come back here for Lab 4. The code
+in this branch is already the result of that lab.
 
 ## What you will learn
 
