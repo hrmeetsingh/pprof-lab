@@ -1,0 +1,11 @@
+.git
+.gitignore
+.dockerignore
+.DS_Store
+bin/
+.bin/
+profiles/
+coverage.out
+*.pprof
+*.pb.gz
+*.log

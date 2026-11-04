@@ -1,0 +1,39 @@
+name: pprof-lab
+
+services:
+  docproc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pprof-lab:latest
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+    environment:
+      GRPC_ADDR: ":50051"
+      ADMIN_ADDR: ":9090"
+      LOG_LEVEL: "info"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 10s
+
+  loadgen:
+    image: pprof-lab:latest
+    entrypoint: ["loadgen"]
+    command:
+      - "-addr"
+      - "docproc:50051"
+      - "-mode"
+      - "mixed"
+      - "-duration"
+      - "5m"
+      - "-concurrency"
+      - "8"
+    depends_on:
+      docproc:
+        condition: service_healthy
+    profiles: ["load"]

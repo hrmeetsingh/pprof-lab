@@ -1,0 +1,20 @@
+.DS_Store
+
+# Local binaries
+/bin/
+/.bin/
+/profiles/bin/
+*.test
+*.out
+
+# Profile artifacts and benchmark output (regenerate them with `make demo`)
+/profiles/*.pprof
+/profiles/*.pb.gz
+/profiles/*.txt
+/profiles/*.json
+/profiles/*.log
+!/profiles/.gitkeep
+
+# Editor/IDE
+.idea/
+.vscode/

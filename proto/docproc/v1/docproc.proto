@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+// Package docproc.v1 contains the document processing service contract.
+package docproc.v1;
+
+option go_package = "github.com/harmeetsingh/pprof-lab/gen/docproc/v1;docprocv1";
+
+// DocumentService is a small in-memory document processing microservice.
+// It is deliberately kept simple so that CPU and memory profiles are easy to
+// attribute to application code.
+service DocumentService {
+  // Ingest stores a batch of documents.
+  rpc Ingest(IngestRequest) returns (IngestResponse);
+
+  // Analyze tokenizes documents, counts terms and returns summaries.
+  // When document_ids is empty every stored document is analyzed.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
+
+  // Search performs a case-insensitive substring search.
+  rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Stats reports process and storage statistics. It is useful for watching
+  // heap growth while generating load.
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}
+
+message Document {
+  string id = 1;
+  string title = 2;
+  string body = 3;
+}
+
+message TermCount {
+  string term = 1;
+  int64 count = 2;
+}
+
+message DocumentSummary {
+  string document_id = 1;
+  int32 word_count = 2;
+  int32 unique_terms = 3;
+  // SHA-256 over the token stream, separated by single spaces.
+  string digest = 4;
+  repeated TermCount top_terms = 5;
+}
+
+message IngestRequest {
+  repeated Document documents = 1;
+}
+
+message IngestResponse {
+  repeated string ids = 1;
+  int32 accepted = 2;
+}
+
+message AnalyzeRequest {
+  repeated string document_ids = 1;
+  // Defaults to 10 and is capped at 50.
+  int32 top_terms = 2;
+}
+
+message AnalyzeResponse {
+  repeated DocumentSummary summaries = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  repeated string document_ids = 2;
+  // Defaults to 10 and is capped at 100.
+  int32 limit = 3;
+}
+
+message SearchHit {
+  string document_id = 1;
+  int32 score = 2;
+  string snippet = 3;
+}
+
+message SearchResponse {
+  repeated SearchHit hits = 1;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+  int64 documents = 1;
+  int64 total_bytes = 2;
+  int64 analyses = 3;
+  int64 cache_hits = 4;
+  int64 cache_entries = 5;
+  int64 heap_alloc_bytes = 6;
+  int64 goroutines = 7;
+  int64 evictions = 8;
+}
