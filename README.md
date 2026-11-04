@@ -317,6 +317,10 @@ Duration: 6s, Total samples = 11400ms (189.99%)
      150ms  1.32% 55.44%      510ms  4.47%  processing.countTerms
 ```
 
+Total samples can exceed the wall-clock duration because multiple goroutines
+run on multiple cores. The percentages are shares of sampled CPU time, not
+wall time.
+
 The `-tags` output attributes samples to RPCs:
 
 ```text
@@ -1141,6 +1145,8 @@ total allocations even when allocation per operation went down. Compare:
 ### Run the benchmark on each branch
 
 ```bash
+mkdir -p profiles
+
 git switch main
 make bench | tee profiles/bench-main.txt
 
