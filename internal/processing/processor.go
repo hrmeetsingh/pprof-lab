@@ -1,7 +1,11 @@
 // Package processing implements the document analysis pipeline used by the
-// demo service. The baseline version intentionally contains a handful of CPU
-// and memory problems so that profiles collected from a running service have
-// something interesting to show. The README explains how to find and fix them.
+// demo service.
+//
+// This branch contains the CPU optimizations. The changes were chosen from CPU
+// profiles captured on the main branch: the tokenizer recompiled a regexp for
+// every document, term counting and top-N selection were quadratic, and the
+// digest builder used quadratic string concatenation. Memory retention is
+// intentionally left untouched on this branch; see optimized_memory for that.
 package processing
 
 import (
@@ -9,7 +13,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -277,40 +280,52 @@ func analyzeDocument(doc Document, topN int) *Summary {
 
 // tokenize lowercases the body and extracts ASCII words.
 //
-// Compiling the regular expression on every call is deliberate: it is a
-// surprisingly common mistake and shows up clearly in CPU and allocation
-// profiles.
+// CPU profile evidence: the baseline compiled `[A-Za-z0-9]+` on every call, so
+// regexp compilation and backtracking dominated the Analyze profile. This
+// scanner performs the same ASCII tokenization without a regexp.
 func tokenize(text string) []string {
-	re := regexp.MustCompile(`[A-Za-z0-9]+`)
 	lower := strings.ToLower(text)
-	return re.FindAllString(lower, -1)
-}
+	tokens := make([]string, 0, len(lower)/6)
 
-// countTerms counts tokens and computes the number of unique terms with a
-// linear scan over the unique slice. That scan is O(n^2) for documents with
-// many distinct words.
-func countTerms(tokens []string) (map[string]int, int) {
-	counts := make(map[string]int)
-	unique := make([]string, 0, len(tokens))
-
-	for _, token := range tokens {
-		counts[token]++
-		found := false
-		for _, existing := range unique {
-			if existing == token {
-				found = true
-				break
+	start := -1
+	for i := 0; i < len(lower); i++ {
+		c := lower[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			if start < 0 {
+				start = i
 			}
+			continue
 		}
-		if !found {
-			unique = append(unique, token)
+		if start >= 0 {
+			tokens = append(tokens, lower[start:i])
+			start = -1
 		}
 	}
-	return counts, len(unique)
+	if start >= 0 {
+		tokens = append(tokens, lower[start:])
+	}
+	return tokens
 }
 
-// topTerms selects the n most frequent terms by repeatedly scanning the whole
-// map, giving O(n * distinct) work.
+// countTerms counts tokens in one pass.
+//
+// CPU profile evidence: the baseline maintained a separate unique slice and
+// scanned it for every token, which is O(n^2) for documents with many distinct
+// words. The counts map already knows every distinct key, so its length is the
+// unique-term count.
+func countTerms(tokens []string) (map[string]int, int) {
+	counts := make(map[string]int, len(tokens))
+	for _, token := range tokens {
+		counts[token]++
+	}
+	return counts, len(counts)
+}
+
+// topTerms selects the n most frequent terms with a single sort.
+//
+// CPU profile evidence: the baseline scanned the entire counts map once per
+// requested term (O(n * distinct)). Building a slice and sorting it once is
+// O(distinct log distinct) and was one of the clearest flat CPU reductions.
 func topTerms(counts map[string]int, n int) []TermCount {
 	if n <= 0 {
 		n = 10
@@ -322,40 +337,51 @@ func topTerms(counts map[string]int, n int) []TermCount {
 		return nil
 	}
 
-	used := make(map[string]struct{}, n)
-	result := make([]TermCount, 0, n)
-	for len(result) < n {
-		bestTerm := ""
-		bestCount := -1
-		for term, count := range counts {
-			if _, taken := used[term]; taken {
-				continue
-			}
-			if count > bestCount || (count == bestCount && term < bestTerm) {
-				bestTerm = term
-				bestCount = count
-			}
+	terms := make([]termFrequency, 0, len(counts))
+	for term, count := range counts {
+		terms = append(terms, termFrequency{term: term, count: count})
+	}
+	sort.Slice(terms, func(i, j int) bool {
+		if terms[i].count != terms[j].count {
+			return terms[i].count > terms[j].count
 		}
-		if bestCount < 0 {
-			break
-		}
-		used[bestTerm] = struct{}{}
-		result = append(result, TermCount{Term: bestTerm, Count: int64(bestCount)})
+		return terms[i].term < terms[j].term
+	})
+
+	result := make([]TermCount, n)
+	for i := 0; i < n; i++ {
+		result[i] = TermCount{Term: terms[i].term, Count: int64(terms[i].count)}
 	}
 	return result
 }
 
-// fingerprint hashes the token stream. Building the intermediate string with
-// += creates a new string on every iteration, which is quadratic in both time
-// and allocations.
+type termFrequency struct {
+	term  string
+	count int
+}
+
+// fingerprint hashes the token stream incrementally.
+//
+// CPU and allocation profile evidence: the baseline built the joined token
+// string with +=, allocating a new, larger string on every iteration. Streaming
+// the tokens into the hasher produces the identical digest without the
+// quadratic intermediate string.
 func fingerprint(tokens []string) string {
-	joined := ""
+	h := sha256.New()
+	buf := make([]byte, 0, 4096)
+
 	for i, token := range tokens {
 		if i > 0 {
-			joined += " "
+			buf = append(buf, ' ')
 		}
-		joined += token
+		buf = append(buf, token...)
+		if len(buf) >= cap(buf) {
+			_, _ = h.Write(buf)
+			buf = buf[:0]
+		}
 	}
-	sum := sha256.Sum256([]byte(joined))
-	return hex.EncodeToString(sum[:])
+	if len(buf) > 0 {
+		_, _ = h.Write(buf)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
